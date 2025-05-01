@@ -24,6 +24,28 @@ const (
 	LevelDebug     = slog.LevelDebug
 )
 
+func WithAttrs(ctx context.Context, attrs ...slog.Attr) context.Context {
+	l := loggerFromCtx(ctx)
+	if l == globalLogger {
+		lcopy := *l
+		l = &lcopy
+	}
+	for _, a := range attrs {
+		l = l.With(a)
+	}
+	return context.WithValue(ctx, loggerKey, l)
+}
+
+func WithGroup(ctx context.Context, name string) context.Context {
+	l := loggerFromCtx(ctx)
+	if l == globalLogger {
+		lcopy := *l
+		l = &lcopy
+	}
+
+	return context.WithValue(ctx, loggerKey, l.WithGroup(name))
+}
+
 func Fatal(ctx context.Context, message string, attrs ...any) {
 	l := loggerFromCtx(ctx)
 
