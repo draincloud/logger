@@ -13,8 +13,10 @@ type _key string
 //nolint:gochecknoglobals // ...
 var loggerKey _key = "_core_logger"
 
+// LoggerOpt options for logger builder.
 type LoggerOpt func(p *loggerParams)
 
+// NewLoggerContext creates a new context woth logger.
 func NewLoggerContext(ctx context.Context, opts ...LoggerOpt) context.Context {
 	p := new(loggerParams)
 
@@ -35,36 +37,42 @@ type loggerParams struct {
 	handler   slog.Handler
 }
 
+// WithWriter sets a writer.
 func WithWriter(w io.Writer) LoggerOpt {
 	return func(p *loggerParams) {
 		p.writers = append(p.writers, w)
 	}
 }
 
+// WithLevel sets logging level.
 func WithLevel(l slog.Level) LoggerOpt {
 	return func(p *loggerParams) {
 		p.lvl = l
 	}
 }
 
+// Local sets a pretty handler for a logger.
 func Local() LoggerOpt {
 	return func(p *loggerParams) {
 		p.local = true
 	}
 }
 
+// WithSource adds caller to a logging entry.
 func WithSource() LoggerOpt {
 	return func(p *loggerParams) {
 		p.addSource = true
 	}
 }
 
+// WithHandler sets custom handler.
 func WithHandler(h slog.Handler) LoggerOpt {
 	return func(p *loggerParams) {
 		p.handler = h
 	}
 }
 
+// Err is an easy to use error logging attribute.
 func Err(err error) slog.Attr {
 	return slog.Attr{
 		Key:   "error",
@@ -72,6 +80,7 @@ func Err(err error) slog.Attr {
 	}
 }
 
+// MapLevel maps string level to slog.
 func MapLevel(lvl string) slog.Level {
 	switch strings.ToLower(lvl) {
 	case "debug":
@@ -160,6 +169,11 @@ func newLoggerHandler(lvl slog.Level, w io.Writer) slog.Handler {
 			return a
 		},
 	})
+}
+
+// FromContext fetches logger from context.
+func FromContext(ctx context.Context) *slog.Logger {
+	return loggerFromCtx(ctx)
 }
 
 func loggerFromCtx(ctx context.Context) *slog.Logger {
