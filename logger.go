@@ -2,6 +2,7 @@ package logger
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 )
@@ -100,4 +101,52 @@ func Debug(ctx context.Context, message string, attrs ...any) {
 	l := loggerFromCtx(ctx)
 
 	l.DebugContext(ctx, message, attrs...)
+}
+
+func EmergencyKV(ctx context.Context, message string, attrs ...any) {
+	l := loggerFromCtx(ctx)
+
+	l.Log(ctx, LevelEmergency, fmt.Sprintf(message, attrs...))
+}
+
+func AlertKV(ctx context.Context, message string, attrs ...any) {
+	l := loggerFromCtx(ctx)
+
+	l.Log(ctx, LevelAlert, fmt.Sprintf(message, attrs...))
+}
+
+func CritialKV(ctx context.Context, message string, attrs ...any) {
+	l := loggerFromCtx(ctx)
+
+	l.Log(ctx, LevelCritial, fmt.Sprintf(message, attrs...))
+}
+
+func ErrorKV(ctx context.Context, message string, attrs ...any) {
+	l := loggerFromCtx(ctx)
+
+	l.ErrorContext(ctx, fmt.Sprintf(message, attrs...))
+}
+
+func WarnKV(ctx context.Context, message string, attrs ...any) {
+	l := loggerFromCtx(ctx)
+
+	l.WarnContext(ctx, fmt.Sprintf(message, attrs...))
+}
+
+func NoticeKV(ctx context.Context, message string, attrs ...any) {
+	l := loggerFromCtx(ctx)
+
+	l.Log(ctx, LevelNotice, fmt.Sprintf(message, attrs...))
+}
+
+func InfoKV(ctx context.Context, message string, attrs ...any) {
+	l := loggerFromCtx(ctx)
+
+	l.InfoContext(ctx, fmt.Sprintf(message, attrs...))
+}
+
+func DebugKV(ctx context.Context, message string, attrs ...any) {
+	l := loggerFromCtx(ctx)
+
+	l.DebugContext(ctx, fmt.Sprintf(message, attrs...))
 }
