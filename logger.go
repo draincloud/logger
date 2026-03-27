@@ -10,6 +10,10 @@ import (
 //nolint:gochecknoglobals // ...
 var globalLogger *slog.Logger = slog.New(newLoggerHandler(LevelDebug, os.Stdout))
 
+func SetGlobalLogger(l *slog.Logger) {
+	globalLogger = l
+}
+
 func SetLevel(l slog.Level) {
 	globalLogger = slog.New(newLoggerHandler(l, os.Stdout))
 }
@@ -23,6 +27,20 @@ const (
 	LevelNotice    = slog.Level(2)
 	LevelInfo      = slog.LevelInfo
 	LevelDebug     = slog.LevelDebug
+)
+
+type LogFunc func(context.Context, string, ...any)
+
+var (
+	Falalf     LogFunc = FatalKV
+	Emergencyf LogFunc = EmergencyKV
+	Alertf     LogFunc = AlertKV
+	Critialf   LogFunc = CritialKV
+	Errorf     LogFunc = ErrorKV
+	Warnf      LogFunc = WarnKV
+	Noticef    LogFunc = NoticeKV
+	Infof      LogFunc = InfoKV
+	Debugf     LogFunc = DebugKV
 )
 
 func WithAttrs(ctx context.Context, attrs ...slog.Attr) context.Context {
@@ -51,8 +69,7 @@ func Fatal(ctx context.Context, message string, attrs ...any) {
 	l := loggerFromCtx(ctx)
 
 	l.Log(ctx, LevelEmergency, message, attrs...)
-
-	os.Exit(1)
+	panic(fmt.Sprintf(message, attrs...))
 }
 
 func Emergency(ctx context.Context, message string, attrs ...any) {
@@ -101,6 +118,13 @@ func Debug(ctx context.Context, message string, attrs ...any) {
 	l := loggerFromCtx(ctx)
 
 	l.DebugContext(ctx, message, attrs...)
+}
+
+func FatalKV(ctx context.Context, message string, attrs ...any) {
+	l := loggerFromCtx(ctx)
+
+	l.Log(ctx, LevelEmergency, fmt.Sprintf(message, attrs...))
+	panic(fmt.Sprintf(message, attrs...))
 }
 
 func EmergencyKV(ctx context.Context, message string, attrs ...any) {
