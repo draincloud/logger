@@ -171,9 +171,25 @@ func newLoggerHandler(lvl slog.Level, w io.Writer) slog.Handler {
 	})
 }
 
-// FromContext fetches logger from context.
+// FromContext returns logger from context.
 func FromContext(ctx context.Context) *slog.Logger {
 	return loggerFromCtx(ctx)
+}
+
+// WithLogger returns context with logger l.
+func WithLogger(ctx context.Context, l *slog.Logger) context.Context {
+	return context.WithValue(ctx, loggerKey, l)
+}
+
+// GetLoggerSafe returns logger from context. If ctx.Logger == globalLogger, globalLogger will be copied.
+func GetLoggerSafe(ctx context.Context) *slog.Logger {
+	l := loggerFromCtx(ctx)
+	if l == globalLogger {
+		lcopy := *l
+		l = &lcopy
+	}
+
+	return l
 }
 
 func loggerFromCtx(ctx context.Context) *slog.Logger {
