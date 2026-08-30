@@ -1,0 +1,61 @@
+name: release
+
+on:
+  push:
+    branches: [master]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  tag:
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 
+
+      - name: Tag the merge
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # A re-run of this workflow, or a tag pushed by hand, must not publish a
+          # second version of the same code.
+          existing=$(git tag --points-at HEAD --list 'v*' | head -1)
+          if [ -n "$existing" ]; then
+            echo "HEAD is already released as $existing, nothing to do"
+            exit 0
+          fi
+
+          latest=$(git tag --list 'v*' --sort=-v:refname \
+            | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -1 || true)
+
+          if [ -z "$latest" ]; then
+            next=v0.1.0
+          elif git diff --quiet "$latest" HEAD; then
+            echo "unchanged since $latest, nothing to release"
+            exit 0
+          else
+            IFS=. read -r major minor patch <<<"${latest#v}"
+            next="v${major}.${minor}.$((patch + 1))"
+          fi
+
+          echo "releasing $next (previous: ${latest:-none})"
+          git tag -a "$next" -m "$next"
+          git push origin "$next"
+          gh release create "$next" --title "$next" --generate-notes

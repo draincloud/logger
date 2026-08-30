@@ -5,23 +5,42 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
+	"sync/atomic"
+	"time"
 )
 
 //nolint:gochecknoglobals // ...
-var globalLogger *slog.Logger = slog.New(newLoggerHandler(LevelDebug, os.Stdout))
+var (
+	globalLevel  = new(slog.LevelVar)
+	globalLogger = newGlobalLogger()
+)
 
-func SetGlobalLogger(l *slog.Logger) {
-	globalLogger = l
+func newGlobalLogger() *atomic.Pointer[slog.Logger] {
+	p := new(atomic.Pointer[slog.Logger])
+	p.Store(slog.New(newLoggerHandler(globalLevel, false, os.Stdout)))
+
+	return p
 }
 
+func SetGlobalLogger(l *slog.Logger) {
+	if l == nil {
+		return
+	}
+
+	globalLogger.Store(l)
+	slog.SetDefault(l)
+}
+
+// SetLevel sets the level of the logger
 func SetLevel(l slog.Level) {
-	globalLogger = slog.New(newLoggerHandler(l, os.Stdout))
+	globalLevel.Set(l)
 }
 
 const (
 	LevelEmergency = slog.Level(10000)
 	LevelAlert     = slog.Level(1000)
-	LevelCritial   = slog.Level(100)
+	LevelCritical  = slog.Level(100)
 	LevelError     = slog.LevelError
 	LevelWarn      = slog.LevelWarn
 	LevelNotice    = slog.Level(2)
@@ -29,148 +48,142 @@ const (
 	LevelDebug     = slog.LevelDebug
 )
 
-type LogFunc func(context.Context, string, ...any)
+// LevelName renders lvl under this package's level names.
+func LevelName(lvl slog.Level) string {
+	switch {
+	case lvl < LevelInfo:
+		return "DEBUG"
+	case lvl < LevelNotice:
+		return "INFO"
+	case lvl < LevelWarn:
+		return "NOTICE"
+	case lvl < LevelError:
+		return "WARNING"
+	case lvl < LevelCritical:
+		return "ERROR"
+	case lvl < LevelAlert:
+		return "CRITICAL"
+	case lvl < LevelEmergency:
+		return "ALERT"
+	default:
+		return "EMERGENCY"
+	}
+}
 
-var (
-	Falalf     LogFunc = FatalKV
-	Emergencyf LogFunc = EmergencyKV
-	Alertf     LogFunc = AlertKV
-	Critialf   LogFunc = CritialKV
-	Errorf     LogFunc = ErrorKV
-	Warnf      LogFunc = WarnKV
-	Noticef    LogFunc = NoticeKV
-	Infof      LogFunc = InfoKV
-	Debugf     LogFunc = DebugKV
-)
+// Enabled reports whether the context's logger emits records at level.
+func Enabled(ctx context.Context, level slog.Level) bool {
+	return loggerFromCtx(ctx).Enabled(ctx, level)
+}
 
 func WithAttrs(ctx context.Context, attrs ...slog.Attr) context.Context {
 	l := loggerFromCtx(ctx)
-	if l == globalLogger {
-		lcopy := *l
-		l = &lcopy
-	}
 	for _, a := range attrs {
 		l = l.With(a)
 	}
+
 	return context.WithValue(ctx, loggerKey, l)
 }
 
 func WithGroup(ctx context.Context, name string) context.Context {
 	l := loggerFromCtx(ctx)
-	if l == globalLogger {
-		lcopy := *l
-		l = &lcopy
-	}
 
 	return context.WithValue(ctx, loggerKey, l.WithGroup(name))
 }
 
 func Fatal(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.Log(ctx, LevelEmergency, message, attrs...)
-	panic(fmt.Sprintf(message, attrs...))
+	log(ctx, LevelEmergency, message, attrs...)
+	os.Exit(1)
 }
 
 func Emergency(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.Log(ctx, LevelEmergency, message, attrs...)
+	log(ctx, LevelEmergency, message, attrs...)
 }
 
 func Alert(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.Log(ctx, LevelAlert, message, attrs...)
+	log(ctx, LevelAlert, message, attrs...)
 }
 
-func Critial(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.Log(ctx, LevelCritial, message, attrs...)
+func Critical(ctx context.Context, message string, attrs ...any) {
+	log(ctx, LevelCritical, message, attrs...)
 }
 
 func Error(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.ErrorContext(ctx, message, attrs...)
+	log(ctx, LevelError, message, attrs...)
 }
 
 func Warn(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.WarnContext(ctx, message, attrs...)
+	log(ctx, LevelWarn, message, attrs...)
 }
 
 func Notice(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.Log(ctx, LevelNotice, message, attrs...)
+	log(ctx, LevelNotice, message, attrs...)
 }
 
 func Info(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.InfoContext(ctx, message, attrs...)
+	log(ctx, LevelInfo, message, attrs...)
 }
 
 func Debug(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.DebugContext(ctx, message, attrs...)
+	log(ctx, LevelDebug, message, attrs...)
 }
 
-func FatalKV(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.Log(ctx, LevelEmergency, fmt.Sprintf(message, attrs...))
-	panic(fmt.Sprintf(message, attrs...))
+func Fatalf(ctx context.Context, format string, args ...any) {
+	log(ctx, LevelEmergency, sprintf(format, args...))
+	os.Exit(1)
 }
 
-func EmergencyKV(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.Log(ctx, LevelEmergency, fmt.Sprintf(message, attrs...))
+func Emergencyf(ctx context.Context, format string, args ...any) {
+	log(ctx, LevelEmergency, sprintf(format, args...))
 }
 
-func AlertKV(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.Log(ctx, LevelAlert, fmt.Sprintf(message, attrs...))
+func Alertf(ctx context.Context, format string, args ...any) {
+	log(ctx, LevelAlert, sprintf(format, args...))
 }
 
-func CritialKV(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.Log(ctx, LevelCritial, fmt.Sprintf(message, attrs...))
+func Criticalf(ctx context.Context, format string, args ...any) {
+	log(ctx, LevelCritical, sprintf(format, args...))
 }
 
-func ErrorKV(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.ErrorContext(ctx, fmt.Sprintf(message, attrs...))
+func Errorf(ctx context.Context, format string, args ...any) {
+	log(ctx, LevelError, sprintf(format, args...))
 }
 
-func WarnKV(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.WarnContext(ctx, fmt.Sprintf(message, attrs...))
+func Warnf(ctx context.Context, format string, args ...any) {
+	log(ctx, LevelWarn, sprintf(format, args...))
 }
 
-func NoticeKV(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.Log(ctx, LevelNotice, fmt.Sprintf(message, attrs...))
+func Noticef(ctx context.Context, format string, args ...any) {
+	log(ctx, LevelNotice, sprintf(format, args...))
 }
 
-func InfoKV(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
-
-	l.InfoContext(ctx, fmt.Sprintf(message, attrs...))
+func Infof(ctx context.Context, format string, args ...any) {
+	log(ctx, LevelInfo, sprintf(format, args...))
 }
 
-func DebugKV(ctx context.Context, message string, attrs ...any) {
-	l := loggerFromCtx(ctx)
+func Debugf(ctx context.Context, format string, args ...any) {
+	log(ctx, LevelDebug, sprintf(format, args...))
+}
 
-	l.DebugContext(ctx, fmt.Sprintf(message, attrs...))
+func log(ctx context.Context, level slog.Level, message string, attrs ...any) {
+	l := loggerFromCtx(ctx)
+	if !l.Enabled(ctx, level) {
+		return
+	}
+
+	var pcs [1]uintptr
+
+	runtime.Callers(3, pcs[:])
+
+	r := slog.NewRecord(time.Now(), level, message, pcs[0])
+	r.Add(attrs...)
+
+	_ = l.Handler().Handle(ctx, r)
+}
+
+func sprintf(format string, args ...any) string {
+	if len(args) == 0 {
+		return format
+	}
+
+	return fmt.Sprintf(format, args...)
 }
