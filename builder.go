@@ -32,8 +32,9 @@ func NewLoggerContext(ctx context.Context, opts ...LoggerOpt) context.Context {
 type loggerParams struct {
 	local     bool
 	addSource bool
-	lvl       slog.Level
+	lvl       slog.Leveler
 	writers   []io.Writer
+	errWriter io.Writer
 	handler   slog.Handler
 }
 
@@ -44,10 +45,19 @@ func WithWriter(w io.Writer) LoggerOpt {
 	}
 }
 
-// WithLevel sets logging level.
-func WithLevel(l slog.Level) LoggerOpt {
+// WithLevel sets logging level. Pass a *slog.LevelVar instead of a slog.Level to
+// keep control of the level after the logger is built.
+func WithLevel(l slog.Leveler) LoggerOpt {
 	return func(p *loggerParams) {
 		p.lvl = l
+	}
+}
+
+// WithErrorWriter sends records at error level and above to w, and everything below
+// it to the writers set by WithWriter. Ignored when WithHandler supplies a handler.
+func WithErrorWriter(w io.Writer) LoggerOpt {
+	return func(p *loggerParams) {
+		p.errWriter = w
 	}
 }
 
@@ -89,12 +99,12 @@ func MapLevel(lvl string) slog.Level {
 		return LevelInfo
 	case "notice":
 		return LevelNotice
-	case "warn":
+	case "warn", "warning":
 		return LevelWarn
 	case "error":
 		return LevelError
 	case "critical":
-		return LevelCritial
+		return LevelCritical
 	case "alert":
 		return LevelAlert
 	case "emergency":
@@ -105,13 +115,19 @@ func MapLevel(lvl string) slog.Level {
 }
 
 func (b *loggerParams) build() *slog.Logger {
+	if b.handler != nil {
+		return slog.New(b.handler)
+	}
+
 	if len(b.writers) == 0 {
 		b.writers = append(b.writers, os.Stdout)
 	}
 
-	w := io.MultiWriter(b.writers...)
+	if b.lvl == nil {
+		b.lvl = LevelInfo
+	}
 
-	var handler slog.Handler
+	w := io.MultiWriter(b.writers...)
 
 	if b.local {
 		opts := prettyHandlerOptions{
@@ -121,48 +137,33 @@ func (b *loggerParams) build() *slog.Logger {
 			},
 		}
 
-		if b.handler != nil {
-			handler = b.handler
-		} else {
-			handler = opts.newPrettyHandler(w)
-		}
+		build := func(w io.Writer) slog.Handler { return opts.newPrettyHandler(w) }
 
-		return slog.New(handler)
+		return slog.New(b.route(build, w))
 	}
 
-	if b.handler != nil {
-		handler = b.handler
-	} else {
-		handler = newLoggerHandler(b.lvl, w)
-	}
+	build := func(w io.Writer) slog.Handler { return newLoggerHandler(b.lvl, b.addSource, w) }
 
-	return slog.New(handler)
+	return slog.New(b.route(build, w))
 }
 
-func newLoggerHandler(lvl slog.Level, w io.Writer) slog.Handler {
-	return slog.NewJSONHandler(w, &slog.HandlerOptions{
-		Level: lvl,
-		ReplaceAttr: func(groups []string, a slog.Attr) slog.Attr {
-			if a.Key == slog.LevelKey {
-				level := a.Value.Any().(slog.Level)
+// route pairs the handler for w with one for the error writer, when there is one.
+func (b *loggerParams) route(build func(io.Writer) slog.Handler, w io.Writer) slog.Handler {
+	if b.errWriter == nil {
+		return build(w)
+	}
 
-				switch {
-				case level < LevelInfo:
-					a.Value = slog.StringValue("DEBUG")
-				case level < LevelNotice:
-					a.Value = slog.StringValue("INFO")
-				case level < LevelWarn:
-					a.Value = slog.StringValue("NOTICE")
-				case level < LevelError:
-					a.Value = slog.StringValue("WARNING")
-				case level < LevelCritial:
-					a.Value = slog.StringValue("ERROR")
-				case level < LevelAlert:
-					a.Value = slog.StringValue("CRITICAL")
-				case level < LevelEmergency:
-					a.Value = slog.StringValue("ALERT")
-				default:
-					a.Value = slog.StringValue("EMERGENCY")
+	return &splitHandler{low: build(w), high: build(b.errWriter)}
+}
+
+func newLoggerHandler(lvl slog.Leveler, addSource bool, w io.Writer) slog.Handler {
+	return slog.NewJSONHandler(w, &slog.HandlerOptions{
+		Level:     lvl,
+		AddSource: addSource,
+		ReplaceAttr: func(_ []string, a slog.Attr) slog.Attr {
+			if a.Key == slog.LevelKey {
+				if level, ok := a.Value.Any().(slog.Level); ok {
+					a.Value = slog.StringValue(LevelName(level))
 				}
 			}
 
@@ -181,21 +182,10 @@ func WithLogger(ctx context.Context, l *slog.Logger) context.Context {
 	return context.WithValue(ctx, loggerKey, l)
 }
 
-// GetLoggerSafe returns logger from context. If ctx.Logger == globalLogger, globalLogger will be copied.
-func GetLoggerSafe(ctx context.Context) *slog.Logger {
-	l := loggerFromCtx(ctx)
-	if l == globalLogger {
-		lcopy := *l
-		l = &lcopy
-	}
-
-	return l
-}
-
 func loggerFromCtx(ctx context.Context) *slog.Logger {
-	if l, ok := ctx.Value(loggerKey).(*slog.Logger); ok {
+	if l, ok := ctx.Value(loggerKey).(*slog.Logger); ok && l != nil {
 		return l
 	}
 
-	return globalLogger
+	return globalLogger.Load()
 }
